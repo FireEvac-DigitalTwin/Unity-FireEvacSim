@@ -15,8 +15,8 @@ public class AgentSpawner : MonoBehaviour
     [Header("에이전트 설정")]
     public GameObject agentPrefab;
     public int agentCount = 10;
-    public float minDistanceFromFire = 7.0f;
-    public float agentAvoidRadius = 1.5f; // 에이전트 간 최소 간격
+    public float minDistanceFromFire = 5.0f; // ⭐ 요청하신 대로 5m로 수정
+    public float agentAvoidRadius = 0.5f;    // 에이전트 간/벽과의 최소 간격 (OverlapSphere 체크용)
 
     private List<EvacuationAgent_NEW> spawnedAgents = new List<EvacuationAgent_NEW>();
 
@@ -49,6 +49,10 @@ public class AgentSpawner : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// ⭐ 매 에피소드마다 호출되어 에이전트들의 '시작 위치'를 재연산합니다.
+    /// 실제 이동(Warp)은 EvacuationManager에서 순서대로 처리하므로 여기서는 위치값만 바꿉니다.
+    /// </summary>
     public void RespawnAll()
     {
         Vector3 areaCenter = FireSpreadManager.Instance != null ? FireSpreadManager.Instance.randomAreaCenter : transform.position;
@@ -58,11 +62,14 @@ public class AgentSpawner : MonoBehaviour
         foreach (var agent in spawnedAgents)
         {
             if (agent == null) continue;
+            
+            // 새 에피소드를 위한 랜덤 위치 뽑기
             Vector3 newPos = GetValidRandomPosition(areaCenter, areaSize, firePos);
-            agent.startPosition = newPos;
-            agent.ResetAgent(); // 에이전트 내부에서 위치를 startPosition으로 옮기는 함수 호출 필요
+            
+            // 에이전트의 시작 좌표만 갱신 (이동 처리는 EvacuationManager 순서에 맞춰 진행)
+            agent.startPosition = newPos; 
         }
-        Debug.Log($"👥 [Spawner] {spawnedAgents.Count}명 분산 재배치 완료.");
+        Debug.Log($"👥 [Spawner] {spawnedAgents.Count}명의 시작 위치 재랜덤화 완료.");
     }
 
     private Vector3 GetValidRandomPosition(Vector3 center, Vector3 size, Vector3 firePos)
@@ -76,8 +83,8 @@ public class AgentSpawner : MonoBehaviour
                 Random.Range(-size.z * 0.5f, size.z * 0.5f)
             );
 
-            // 1. 출구 구역 제외 (FireSpreadManager와 동일 범위)
-            if (candidate.x >= 5f && candidate.x <= 85f && candidate.z >= -65f && candidate.z <= -35f)
+            // 1. ⭐ 출구 구역 제외 (요청하신 x:10~80, z:-60~-40 범위로 수정)
+            if (candidate.x >= 10f && candidate.x <= 80f && candidate.z >= -60f && candidate.z <= -40f)
                 continue;
 
             // 2. NavMesh 확인
@@ -85,16 +92,26 @@ public class AgentSpawner : MonoBehaviour
             if (!NavMesh.SamplePosition(candidate, out hit, 2.0f, NavMesh.AllAreas)) continue;
             candidate = hit.position;
 
-            // 3. ⭐ 병목 방지: 이미 생성된 에이전트나 벽과 겹치는지 확인
-            // "Agent" 태그나 "Wall" 태그가 붙은 오브젝트가 주변에 있으면 다시 뽑기
-            if (Physics.CheckSphere(candidate, agentAvoidRadius, LayerMask.GetMask("Default", "Wall"))) 
-                continue;
+            // 3. ⭐ 벽 겹침 체크 (OverlapSphere 0.5f 사용)
+            bool nearWall = false;
+            Collider[] hitColliders = Physics.OverlapSphere(candidate, agentAvoidRadius);
+            foreach (var col in hitColliders)
+            {
+                if (col.CompareTag("Wall") || col.CompareTag("Agent"))
+                {
+                    nearWall = true;
+                    break;
+                }
+            }
+            if (nearWall) continue;
 
-            // 4. 불과의 거리 확인
+            // 4. ⭐ 초기 불 위치에서 5m 이상 떨어진 곳만 허용
             if (Vector3.Distance(candidate, firePos) < minDistanceFromFire) continue;
 
             return candidate;
         }
+        
+        Debug.LogWarning("⚠️ 유효한 스폰 위치를 찾지 못해 기본 중심값을 반환합니다.");
         return center;
     }
 }
